@@ -6,12 +6,9 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::fs::File as StdFile;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::thread::sleep;
-use std::time::Duration;
 
 #[derive(Debug, Parser)]
 struct Opts {
@@ -22,21 +19,20 @@ struct Opts {
 fn main() -> Result<()> {
     let opts = Opts::parse();
     let input = read_input(&opts.input)?;
-    let mut map = GrowingMap::new();
-    // println!("{map}");
+    let mut map = GrowingMap::new(2);
+    println!("{map}");
     for movement in input {
         let mut _stdout = std::io::stdout().lock();
-        // stdout.write_all(b"\\033[2J");
-        // println!("{movement:?}");
+        println!("{movement:?}");
         map.move_head(movement);
-        // println!("{map}");
+        println!("{map}");
         // sleep(Duration::from_secs(1));
     }
     println!("Trail locations: {}", map.calc_trail());
     Ok(())
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 struct Position {
     x: usize,
     y: usize,
@@ -45,22 +41,42 @@ struct Position {
 #[derive(Debug)]
 struct GrowingMap {
     map: VecDeque<VecDeque<Cell>>,
-    head: Position,
-    tail: Position,
+    body: Vec<Position>,
 }
 
 impl GrowingMap {
-    fn new() -> Self {
+    fn new(body_len: usize) -> Self {
         let mut map = VecDeque::new();
         let mut row = VecDeque::new();
         row.push_back(Cell::None);
         map.push_back(row);
-
-        Self {
-            map,
-            head: Position { x: 0, y: 0 },
-            tail: Position { x: 0, y: 0 },
+        let mut body = Vec::new();
+        for _ in 0..body_len {
+            body.push(Position::default())
         }
+
+        Self { map, body }
+    }
+
+    fn add_x_entities(&mut self, val: usize) {
+        for body in self.body.iter_mut() {
+            body.x += val;
+        }
+    }
+
+    fn add_y_entities(&mut self, val: usize) {
+        for body in self.body.iter_mut() {
+            body.y += val;
+        }
+    }
+
+    fn check_body(&self, pos: &Position) -> isize {
+        for (i, body) in self.body.iter().enumerate() {
+            if pos == body {
+                return i;
+            }
+        }
+        -1
     }
 
     fn calc_trail(&self) -> usize {
@@ -107,40 +123,44 @@ impl GrowingMap {
         self.maybe_expand(dir);
         match dir {
             Direction::Up(val) => {
-                let y = self.head.y - val;
-                for i in (y..=self.head.y).rev() {
-                    self.leave_cell(self.head.x, i, Rope::Head);
-                    self.move_tail(self.head.x, i);
+                let head = self.body[0].clone();
+                let y = head.y - val;
+                for i in (y..=head.y).rev() {
+                    self.leave_cell(head.x, i, Rope::Head);
+                    self.move_tail(head.x, i);
                 }
-                self.move_tail(self.head.x, y);
-                self.head.y = y;
+                self.move_tail(head.x, y);
+                self.body[0].y = y;
             }
             Direction::Down(val) => {
-                let y = self.head.y + val;
-                for i in self.head.y..y {
-                    self.leave_cell(self.head.x, i, Rope::Head);
-                    self.move_tail(self.head.x, i);
+                let head = self.body[0].clone();
+                let y = head.y + val;
+                for i in head.y..y {
+                    self.leave_cell(head.x, i, Rope::Head);
+                    self.move_tail(head.x, i);
                 }
-                self.move_tail(self.head.x, y);
-                self.head.y = y;
+                self.move_tail(head.x, y);
+                self.body[0].y = y;
             }
             Direction::Left(val) => {
-                let x = self.head.x - val;
-                for i in (x..=self.head.x).rev() {
-                    self.leave_cell(i, self.head.y, Rope::Head);
-                    self.move_tail(i, self.head.y);
+                let head = self.body[0].clone();
+                let x = head.x - val;
+                for i in (x..=head.x).rev() {
+                    self.leave_cell(i, head.y, Rope::Head);
+                    self.move_tail(i, head.y);
                 }
-                self.move_tail(x, self.head.y);
-                self.head.x = x;
+                self.move_tail(x, head.y);
+                self.body[0].x = x;
             }
             Direction::Right(val) => {
-                let x = self.head.x + val;
-                for i in self.head.x..x {
-                    self.leave_cell(i, self.head.y, Rope::Head);
-                    self.move_tail(i, self.head.y);
+                let head = self.body[0].clone();
+                let x = head.x + val;
+                for i in head.x..x {
+                    self.leave_cell(i, head.y, Rope::Head);
+                    self.move_tail(i, head.y);
                 }
-                self.move_tail(x, self.head.y);
-                self.head.x = x;
+                self.move_tail(x, head.y);
+                self.body[0].x = x;
             }
         }
     }
@@ -149,7 +169,7 @@ impl GrowingMap {
         let Position {
             x: tail_x,
             y: tail_y,
-        } = self.tail;
+        } = self.body[self.body.len() - 1];
         self.leave_cell(tail_x, tail_y, Rope::Tail);
         let xdiff = head_x as isize - tail_x as isize;
         let ydiff = head_y as isize - tail_y as isize;
@@ -170,7 +190,8 @@ impl GrowingMap {
             }
             other => panic!("Unexpected movement: {other:?}"),
         };
-        self.tail = Position {
+        let last = self.body.len() - 1;
+        self.body[last] = Position {
             x: itail_x as usize,
             y: itail_y as usize,
         };
@@ -178,9 +199,10 @@ impl GrowingMap {
 
     // Handles expanding the map in the direction of movement if required
     fn maybe_expand(&mut self, dir: Direction) {
+        let head = &mut self.body[0];
         match dir {
             Direction::Up(val) => {
-                let diff = self.head.y as isize - val as isize;
+                let diff = head.y as isize - val as isize;
                 if diff < 0 {
                     for _ in 0..(diff.abs()) {
                         let mut row = self.map[0].clone();
@@ -189,12 +211,11 @@ impl GrowingMap {
                         }
                         self.map.push_front(row);
                     }
-                    self.head.y = self.head.y + diff.abs() as usize;
-                    self.tail.y = self.tail.y + diff.abs() as usize;
+                    self.add_y_entities(diff.abs() as usize);
                 }
             }
             Direction::Down(val) => {
-                let diff = (self.head.y + val) as isize - (self.map.len() - 1) as isize;
+                let diff = (head.y + val) as isize - (self.map.len() - 1) as isize;
                 if diff > 0 {
                     for _ in 0..diff {
                         let mut row = self.map[0].clone();
@@ -206,19 +227,18 @@ impl GrowingMap {
                 }
             }
             Direction::Left(val) => {
-                let diff = self.head.x as isize - val as isize;
+                let diff = head.x as isize - val as isize;
                 if diff < 0 {
                     for _ in 0..(diff.abs()) {
                         for i in 0..self.map.len() {
                             self.map[i].push_front(Cell::None);
                         }
                     }
-                    self.head.x = self.head.x + diff.abs() as usize;
-                    self.tail.x = self.tail.x + diff.abs() as usize;
+                    self.add_x_entities(diff.abs() as usize);
                 }
             }
             Direction::Right(val) => {
-                let diff = (self.head.x + val) as isize - (self.map[0].len() - 1) as isize;
+                let diff = (head.x + val) as isize - (self.map[0].len() - 1) as isize;
                 if diff > 0 {
                     for _ in 0..diff {
                         for i in 0..self.map.len() {
@@ -236,11 +256,12 @@ impl fmt::Display for GrowingMap {
         for (y, row) in self.map.iter().enumerate() {
             for (x, col) in row.iter().enumerate() {
                 let pos = Position { x, y };
-                if pos == self.head && pos == self.tail {
-                    write!(f, "[{}]", Rope::Both)?;
-                } else if pos == self.head {
+                let body = self.check_body(&pos);
+                if body == 0 {
                     write!(f, "[{}]", Rope::Head)?;
-                } else if pos == self.tail {
+                } else if body > 0 && body < self.body.len() - 1 {
+                    write!(f, "[{body}]")?;
+                } else if body == self.body.len() - 1 {
                     write!(f, "[{}]", Rope::Tail)?;
                 } else {
                     write!(f, "[{col}]")?;
